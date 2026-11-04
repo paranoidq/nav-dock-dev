@@ -23,6 +23,7 @@ export interface IconPickerModal {
 
 /** 图标库每批渲染多少个（图标有 1500+ 个，一次全渲染会卡） */
 const ICON_PAGE = 240;
+const COMMON_ICONS = ['inbox', 'file-text', 'notebook-pen', 'list-todo', 'calendar', 'bookmark', 'star', 'lightbulb', 'book-open', 'folder', 'home', 'target', 'briefcase', 'pencil', 'compass'];
 
 /** 图标 id 的展示名：getIconIds() 给的是 lucide-xxx，显示时去掉前缀更好读 */
 export function iconDisplayName(id) {
@@ -90,7 +91,10 @@ export class IconPickerModal extends Modal {
 					const bare = iconDisplayName(id).toLowerCase();
 					return bare.includes(q) || id.toLowerCase().includes(q);
 				})
-			: all.slice().sort((a, b) => a.localeCompare(b));
+			: all.slice().sort((a, b) => {
+				const rank = (id: string) => { const i = COMMON_ICONS.indexOf(iconDisplayName(id)); return i < 0 ? COMMON_ICONS.length : i; };
+				return rank(a) - rank(b) || a.localeCompare(b);
+			});
 
 		this.gridEl.empty();
 		this.rendered = 0;
@@ -115,6 +119,7 @@ export class IconPickerModal extends Modal {
 				cls: 'nav-dock-icon-item',
 				attr: {
 					'aria-label': iconDisplayName(id),
+					'aria-pressed': String(this.isCurrent(id)),
 					'data-tooltip-position': 'top',
 				},
 			});

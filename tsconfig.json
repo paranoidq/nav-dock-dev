@@ -1,9 +1,13 @@
 {
   "compilerOptions": {
     "target": "ES2018",
-    "module": "CommonJS",
+    "module": "Preserve",
     "moduleResolution": "bundler",
-    "lib": ["DOM", "DOM.Iterable", "ES2018"],
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ES2018"
+    ],
     "strict": true,
     "noImplicitAny": false,
     "esModuleInterop": true,
@@ -11,7 +15,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/**/*.ts"
+  ]
 }

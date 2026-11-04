@@ -1,191 +1,78 @@
-/*
- * 可编辑嵌入：浮层内容用 app.embedRegistry 的 MarkdownEmbed（editable）承载，
- * 点一下就能在原地编辑并自动存盘，和主窗口里点 ![[笔记]] 是同一套东西。
- *
- * 三个坑（都实测过）：
- *   1. Component.removeChild(c) 【不调】 c.unload()，卸载嵌入必须先 embed.unload()；
- *   2. showPreview(true) 才会 save(doc, true) 强制写盘，不带 true 会丢未到 2s 防抖的改动；
- *   3. showPreview 会把 inlineTitleEl / metadataEditor prepend 到 renderer.header.el，
- *      所以样式选择器不能用 >。
+/* Native MarkdownView in a detached leaf: stays editable when focus moves elsewhere.
+ * Unlike MarkdownEmbed, this is a full editor and never changes to preview on blur.
  */
-import { MarkdownRenderer, Scope } from 'obsidian';
-import { isNonEditableTarget } from './constants';
+import { Notice, WorkspaceLeaf, MarkdownView } from 'obsidian';
+import { wsInternal } from './shims';
 
 export const embedMethods = {
-/* ---------- 渲染：可编辑嵌入，失败回退只读 ---------- */
-
-/**
- * 把导航文档渲染进浮层。
- *
- * 优先用 Obsidian 自己的嵌入（`app.embedRegistry`）而不是 MarkdownRenderer：
- * 前者带 `editable` / `showEditor()`，点一下就能在浮层里原地编辑、自动存盘，
- * 和主窗口里点 `![[笔记]]` 是同一套东西。`embedRegistry` 不在公开 d.ts 里，
- * 所以整条路径都套 try/catch —— 拿不到就退回只读渲染，不影响打开。
- */
-async renderPanelContent(this: any, sizer, file) {
-	if (this.mountEmbed(sizer, file)) {
-		try {
-			await this.embed.loadFile();
-			return;
-		} catch (err) {
-			console.error('[nav-dock] 可编辑嵌入加载失败，回退只读渲染', err);
-			this.teardownEmbed();
-			sizer.empty();
+async renderPanelContent(this: any, containerEl: HTMLElement, file, request: number, focus: boolean) {
+	const leaf = new (WorkspaceLeaf as any)(this.app) as WorkspaceLeaf & { containerEl: HTMLElement };
+	this.editorLeaf = leaf;
+	leaf.containerEl.addClass('nav-dock-editor-leaf');
+	containerEl.appendChild(leaf.containerEl);
+	try {
+		this.editorReady = leaf.openFile(file, { active: false, state: { mode: 'source', source: false } });
+		await this.editorReady;
+		if (request !== this.openRequest || this.editorLeaf !== leaf) return;
+		if (!(leaf.view instanceof MarkdownView)) throw new Error('Markdown editor unavailable');
+		const view = leaf.view;
+		const workspace = wsInternal(this.app);
+		// Obsidian won't activate a detached leaf, and its activeEditor setter
+		// ignores MarkdownView. Route editor commands while this view owns focus.
+		leaf.containerEl.addEventListener('focusin', () => {
+			if (this.editorLeaf === leaf) workspace._activeEditor = view;
+		});
+		this.panelEl?.addClass('is-editing');
+		if (focus) view.editor?.focus();
+		leaf.onResize();
+	} catch (error) {
+		console.error('[nav-dock-dev] Editor could not be opened', error);
+		if (request === this.openRequest) {
+			new Notice(this.uiStrings().editorError);
+			this.closePanel();
 		}
 	}
-
-	try {
-		const markdown = await this.app.vault.cachedRead(file);
-		await MarkdownRenderer.render(this.app, markdown, sizer, file.path, this.renderComponent);
-	} catch (err) {
-		console.error('[nav-dock] 渲染失败', err);
-		sizer.empty();
-		sizer.createDiv({ cls: 'nav-dock-error', text: '渲染失败，请检查文档内容。' });
-	}
 },
 
-/**
- * 用 embedRegistry 建一个 Markdown 嵌入挂进 sizer，返回是否成功。
- *
- * 1.14.4 实证：`getEmbedCreator(file)` 返回 `(ctx, file, subpath) => embed`，
- * ctx 需要 `{app, containerEl, linktext, sourcePath, depth, state}`；
- * 返回的实例（内部类 MarkdownEmbed）继承 Component，构造时就建好
- * previewEl / editorEl，`editable` 默认 false（阅读模式里的嵌入是只读的）。
- */
-mountEmbed(this: any, containerEl, file) {
-	const registry = this.app.embedRegistry;
-	if (!registry || typeof registry.getEmbedCreator !== 'function') return false;
-
+/** Capture the old leaf before a new panel is opened, and flush edits before detach. */
+async teardownEmbed(this: any) {
+	const leaf = this.editorLeaf;
+	const ready = this.editorReady;
+	this.editorLeaf = null;
+	this.editorReady = null;
+	if (!leaf) return;
+	if (leaf.view instanceof MarkdownView) wsInternal(this.app).unsetActiveEditor(leaf.view);
 	try {
-		const creator = registry.getEmbedCreator(file);
-		if (!creator) return false;
-
-		const ctx = {
-			app: this.app,
-			containerEl,
-			linktext: file.path,
-			sourcePath: file.path,
-			depth: 0,
-			state: null,
-		};
-		const embed = creator(ctx, file, '');
-		if (!embed || typeof embed.loadFile !== 'function') return false;
-
-		embed.editable = true;
-		// 挂到 renderComponent 下，关窗时随它一起 unload
-		this.renderComponent.addChild(embed);
-		this.embed = embed;
-		return true;
-	} catch (err) {
-		console.error('[nav-dock] 创建可编辑嵌入失败', err);
-		return false;
-	}
-},
-
-/** 卸掉嵌入并把引用清干净（回退渲染、关窗都要走） */
-teardownEmbed(this: any) {
-	const embed = this.embed;
-	if (!embed) return;
-	this.embed = null;
-	// 必须显式 unload：Component.removeChild 只是从子列表里摘掉，
-	// 不会调 unload，编辑器实例和它注册的事件监听会留在那儿
-	try {
-		embed.unload();
-	} catch {
-		/* 已经卸载过就算了 */
-	}
-	if (this.renderComponent) {
-		try {
-			this.renderComponent.removeChild(embed);
-		} catch {
-			/* 还没挂上就算了 */
+		// A fast outside click may close the popup before openFile has finished.
+		// Detaching early would leave that pending load with an orphaned editor.
+		await ready?.catch(() => undefined);
+		const view = leaf.view as MarkdownView;
+		// Native autosave can already be writing. Let it finish before the final flush.
+		while ((view as any).saving) await new Promise((resolve) => window.setTimeout(resolve, 20));
+		if (view instanceof MarkdownView) await view.save();
+		if (this.app.workspace.activeLeaf === leaf) {
+			const previous = this.getActiveMainLeaf();
+			if (previous && previous !== leaf) this.app.workspace.setActiveLeaf(previous, { focus: false });
 		}
+		leaf.detach();
+	} catch (error) {
+		// Obsidian's native save also stores a recovery backup when writing fails.
+		console.error('[nav-dock-dev] Editor save failed', error);
+		new Notice(this.uiStrings().saveError, 0);
 	}
-	this.popEditScope();
 },
-
-/* ---------- 编辑态 ---------- */
 
 isEditing(this: any) {
-	return !!(this.embed && this.embed.editMode);
+	return this.editorLeaf?.view instanceof MarkdownView && this.editorLeaf.view.getMode() === 'source';
 },
 
-/**
- * 预览态点正文 → 进编辑。
- *
- * 排除链接、按钮、输入框、可折叠指示器和「拖选文字」：这些要么是原本的
- * 点击行为，要么是用户想复制内容，都不该切编辑。
- */
-handleBodyClick(this: any, evt) {
-	if (!this.embed || this.isEditing()) return;
-	if (evt.button !== 0 || evt.shiftKey || evt.defaultPrevented) return;
-	if (isNonEditableTarget(evt.target)) return;
-
-	// 拖选了一段文字：用户是想复制，不是想编辑
-	const sel = window.getSelection();
-	if (sel && !sel.isCollapsed && sel.anchorNode && this.panelEl && this.panelEl.contains(sel.anchorNode)) {
-		return;
-	}
-
-	this.enterEditing();
+isEditorAuxiliaryTarget(this: any, target: Element) {
+	return !!target.closest('.modal-container, .suggestion-container, .menu, .popover');
 },
 
-enterEditing(this: any) {
-	if (!this.embed || this.isEditing()) return;
-	this.cancelClose();
-	try {
-		this.embed.showEditor();
-	} catch (err) {
-		console.error('[nav-dock] 进入编辑失败', err);
-		return;
-	}
-	// 编辑器的快捷键（方向键、Cmd+A 等）要进 keymap 作用域才生效，
-	// 否则会被 Obsidian 全局键位吃掉。做法与原生预览浮层一致。
-	this.pushEditScope();
-	if (this.panelEl) this.panelEl.addClass('is-editing');
-},
-
-/**
- * 退出编辑并存盘。
- *
- * `showPreview(true)` 内部会 `destroyEditor(true)` → 取编辑器当前文档 →
- * `save(text, true)` 强制写盘。不带 true 的话未到 2 秒防抖的改动会丢。
- */
-exitEditing(this: any) {
-	if (!this.isEditing()) return;
-	try {
-		this.embed.showPreview(true);
-	} catch (err) {
-		console.error('[nav-dock] 退出编辑失败', err);
-	}
-	this.popEditScope();
-	if (this.panelEl) this.panelEl.removeClass('is-editing');
-},
-
-pushEditScope(this: any) {
-	if (this.editScope) return;
-	try {
-		const scope = new Scope(this.app.scope);
-		// Esc：退出编辑并保存。返回 false 表示不拦截后续处理
-		scope.register([], 'Escape', () => {
-			this.exitEditing();
-			return false;
-		});
-		this.app.keymap.pushScope(scope);
-		this.editScope = scope;
-	} catch {
-		/* Scope 不可用时不影响编辑本身，只是 Esc 不生效 */
-	}
-},
-
-popEditScope(this: any) {
-	if (!this.editScope) return;
-	const scope = this.editScope;
-	this.editScope = null;
-	try {
-		this.app.keymap.popScope(scope);
-	} catch {
-		/* 忽略 */
-	}
+hasEditorDialog(this: any) {
+	return !!this.editorLeaf
+		&& this.app.workspace.activeEditor === this.editorLeaf.view
+		&& !!document.querySelector('.modal-container');
 },
 };

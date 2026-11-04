@@ -2,10 +2,20 @@
  * Nav Dock —— 常量、设置默认值，以及「点哪里不该切编辑」的判定。
  */
 
-export interface NavDockSettings {
+export interface NoteEntry {
+	id: string;
 	notePath: string;
 	icon: string;
 	label: string;
+	locked: boolean;
+}
+
+export function createEntry(): NoteEntry {
+	return { id: crypto.randomUUID(), notePath: '', icon: 'file-text', label: '', locked: false };
+}
+
+export interface NavDockSettings {
+	entries: NoteEntry[];
 	trigger: 'hover' | 'click';
 	linkOpenMode: 'new-tab' | 'current-tab';
 	width: number;
@@ -18,13 +28,11 @@ export interface NavDockSettings {
 }
 
 export const DEFAULT_SETTINGS: NavDockSettings = {
-	notePath: '',        // 要预览的 md 路径（相对库根目录）
-	icon: 'compass',     // Lucide 图标名
-	label: '',           // 悬停提示；空 = 用当前语言的默认文案（见 i18n.ts labelDefault）
-	trigger: 'hover',    // 'hover' = 悬停打开；'click' = 点击打开
+	entries: [],
+	trigger: 'click',    // 默认点击打开；每个文件有独立图标和锁定状态
 	linkOpenMode: 'new-tab',  // 'new-tab' = 双链在新标签页打开；'current-tab' = 替换当前标签页
 	width: 380,          // 浮层宽度 px
-	height: 0,           // 0 = 高度自适应；拖拽后写入实际高度
+	height: 520,         // 编辑器需要明确的可用高度
 	gap: 8,              // 与 ribbon 的水平间距 px
 	closeOnLink: true,   // 点击内部/外部链接后自动收起
 	showHeader: true,    // 显示顶部标题栏（文件名 + 在标签页打开）
@@ -36,7 +44,7 @@ export const CLOSE_DELAY = 220;      // 鼠标离开后延迟收起，留出穿�
 /** 双链预览浮层消失后的宽限期：这段时间内不跟着收浮层，避免「点一下就没了」 */
 export const HOVER_GRACE = 700;
 /** 双链悬停预览的来源名。注册进 hoverLinkSources 后会出现在「页面预览」设置里 */
-export const HOVER_SOURCE = 'nav-dock';
+export const HOVER_SOURCE = 'nav-dock-dev';
 export const MIN_WIDTH = 260;
 export const MIN_HEIGHT = 160;
 export const VIEWPORT_MARGIN = 12;

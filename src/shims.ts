@@ -38,6 +38,15 @@ export interface MarkdownEmbedLike {
 
 /** Workspace 上不在 d.ts 的成员 */
 export interface WorkspaceInternals {
+	/** The public activeEditor setter ignores MarkdownView instances. */
+	_activeEditor: import('obsidian').MarkdownFileInfo | null;
+	unsetActiveEditor(editor: import('obsidian').MarkdownFileInfo): void;
+	/** Native ribbon registry. Obsidian 1.13.7 accepts a separate ID and title. */
+	leftRibbon: {
+		items: { id: string; title: string; icon: string; buttonEl?: HTMLElement }[];
+		addRibbonItemButton(id: string, icon: string, title: string, callback: () => void): HTMLElement;
+		removeRibbonAction(id: string): void;
+	};
 	/** 注册悬停预览来源，defaultMod=false 表示不用按 Cmd */
 	registerHoverLinkSource?: (source: string, opts: { display: string; defaultMod: boolean }) => void;
 	unregisterHoverLinkSource?: (source: string) => void;

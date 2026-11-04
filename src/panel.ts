@@ -5,12 +5,12 @@
  * 委托里的 belongsToMe 要求链接属于某个视图容器，而浮层挂在 document.body 下、
  * 不在 .workspace 内，归属判定失败后点击被直接丢弃。
  */
-import { Notice, setIcon, Component, normalizePath, TFile } from 'obsidian';
+import { Notice, setIcon, normalizePath, TFile } from 'obsidian';
 import { MIN_WIDTH, MIN_HEIGHT, VIEWPORT_MARGIN, WARN_INTERVAL } from './constants';
 
 export const panelMethods = {
-resolveFile(this: any) {
-	const raw = (this.settings.notePath || '').trim();
+resolveFile(this: any, entry = this.getEntry()) {
+	const raw = (entry?.notePath || '').trim();
 	if (!raw) return null;
 
 	const clean = raw.replace(/^\/+/, '');
@@ -34,18 +34,25 @@ warnOnce(this: any, message) {
 },
 
 async openPanel(this: any, options: any = {}) {
-	const file = this.resolveFile();
+	const entry = this.getEntry(options.entryId);
+	const file = this.resolveFile(entry);
 	if (!file) {
 		const S = this.uiStrings();
 		this.warnOnce(
-			this.settings.notePath
-				? S.warnNoFile(this.settings.notePath)
+			entry?.notePath
+				? S.warnNoFile(entry.notePath)
 				: S.warnNoPath
 		);
 		return;
 	}
 
 	this.closePanel();
+	const request = ++this.openRequest;
+	await this.closingEditor;
+	if (this.disposed || request !== this.openRequest) return;
+	this.activeEntryId = entry.id;
+	this.ribbonEl = this.ribbonEls.get(entry.id) || null;
+	this.locked = entry.locked;
 	// closePanel 会把 pinned / placement 重置，所以要在它之后按本次意图重设
 	this.pinned = !!options.pinned;
 	this.placement = options.placement === 'center' ? 'center' : 'dock';
@@ -59,25 +66,19 @@ async openPanel(this: any, options: any = {}) {
 
 	if (this.placement === 'center') {
 		panel.addClass('is-centered');
-		// 轻遮罩：点击即关闭，同时挡住背景的交互，像一扇独立窗口
-		this.backdropEl = document.body.createDiv({ cls: 'nav-dock-backdrop' });
-		this.backdropEl.addEventListener('click', () => this.closePanel());
 	}
 
-	if (this.settings.showHeader) {
+	{
 		const header = panel.createDiv({ cls: 'nav-dock-header' });
+		this.bindPanelDrag(panel, header);
+		if (!this.settings.showHeader) header.addClass('is-compact');
 		header.createSpan({ cls: 'nav-dock-title', text: file.basename });
 
-		// 打开方式切换：悬停 ↔ 点击
-		const triggerBtn = header.createEl('button', {
-			cls: 'clickable-icon nav-dock-trigger',
+		const lockBtn = header.createEl('button', {
+			cls: 'clickable-icon nav-dock-lock',
 			attr: { 'data-tooltip-position': 'bottom' },
 		});
-		this.decorateTriggerButton(triggerBtn);
-		triggerBtn.addEventListener('click', (evt) => {
-			evt.stopPropagation();
-			this.setTrigger(this.settings.trigger === 'hover' ? 'click' : 'hover');
-		});
+		lockBtn.addEventListener('click', () => void this.toggleLock());
 
 		const openBtn = header.createEl('button', {
 			cls: 'clickable-icon nav-dock-open',
@@ -89,10 +90,15 @@ async openPanel(this: any, options: any = {}) {
 			this.openFileBeside(file);
 			this.closePanel();
 		});
+		const closeBtn = header.createEl('button', {
+			cls: 'clickable-icon nav-dock-close',
+			attr: { 'aria-label': S.closePanel, 'data-tooltip-position': 'bottom' },
+		});
+		setIcon(closeBtn, 'x');
+		closeBtn.addEventListener('click', () => this.closePanel());
 	}
 
-	const body = panel.createDiv({ cls: 'nav-dock-body markdown-preview-view markdown-rendered' });
-	const sizer = body.createDiv({ cls: 'markdown-preview-sizer markdown-preview-section' });
+	const body = panel.createDiv({ cls: 'nav-dock-body nav-dock-editor-body' });
 
 	const resizeHandle = panel.createDiv({
 		cls: 'nav-dock-resize',
@@ -100,6 +106,7 @@ async openPanel(this: any, options: any = {}) {
 	});
 
 	this.panelEl = panel;
+	this.decorateLockButton();
 	this.currentFilePath = file.path;
 	this.applySize();
 
@@ -110,23 +117,20 @@ async openPanel(this: any, options: any = {}) {
 	// 悬停双链 → 弹预览
 	panel.addEventListener('mouseover', (evt) => this.handlePanelLinkHover(evt));
 
-	// 预览态点正文 → 就地进入编辑（与 Obsidian 里点嵌入笔记的行为一致）
-	body.addEventListener('click', (evt) => this.handleBodyClick(evt));
 
 	this.bindResize(panel, resizeHandle);
 
 	// 先按空内容定位一次，避免渲染完成后才出现导致闪跳
 	this.reposition();
 
-	this.renderComponent = new Component();
-	this.renderComponent.load();
-
-	await this.renderPanelContent(sizer, file);
+	await this.renderPanelContent(body, file, request, options.focus !== false);
+	if (request !== this.openRequest || this.panelEl !== panel) return;
 
 	// 内容高度确定后重新定位并淡入
 	this.reposition();
 	// 用 window.requestAnimationFrame：弹出窗口（popout window）里裸调用会绑到错误的作用域
 	window.requestAnimationFrame(() => {
+		if (this.panelEl !== panel) return;
 		panel.addClass('is-visible');
 		if (this.backdropEl) this.backdropEl.addClass('is-visible');
 	});
@@ -180,7 +184,7 @@ async openPanel(this: any, options: any = {}) {
 			}
 		}
 
-		if (this.settings.closeOnLink) {
+		if (this.settings.closeOnLink && !this.locked) {
 			// 延迟一个 tick，让跳转先落地再移除 DOM
 			window.setTimeout(() => this.closePanel(), 0);
 		}
@@ -188,7 +192,7 @@ async openPanel(this: any, options: any = {}) {
 
 	// 外部链接只负责按设置收起，默认行为交给浏览器
 	panel.addEventListener('click', (evt) => {
-		if (!this.settings.closeOnLink) return;
+		if (!this.settings.closeOnLink || this.locked) return;
 		if (!(evt.target as Element).closest('a.external-link')) return;
 		window.setTimeout(() => this.closePanel(), 0);
 	});
@@ -211,7 +215,7 @@ applySize(this: any) {
 	const panel = this.panelEl;
 	if (!panel) return;
 
-	panel.style.width = `${this.settings.width}px`;
+	panel.style.width = `${Math.min(this.settings.width, window.innerWidth - VIEWPORT_MARGIN * 2)}px`;
 
 	if (this.settings.height > 0) {
 		panel.style.height = `${this.settings.height}px`;
@@ -220,7 +224,7 @@ applySize(this: any) {
 		// 清掉内联高度，让高度回到内容自适应。
 		// ⚠ 不能直接用静态样式赋值（会被 Obsidian 审核的
 		// obsidianmd/no-static-styles-assignment 判错），所以走 removeProperty。
-		panel.style.removeProperty('height');
+		panel.style.height = `${Math.min(520, window.innerHeight * this.settings.maxHeightVh / 100)}px`;
 		panel.style.maxHeight = `${this.settings.maxHeightVh}vh`;
 	}
 },
@@ -273,6 +277,7 @@ bindResize(this: any, panel, handle) {
 			this.saveSettings();
 			// 拖拽时清掉了 max-height，这里按新尺寸重新写回（含视口上限）
 			this.applySize();
+			this.editorLeaf?.onResize();
 
 			// 拖拽过程中鼠标可能已离开面板，mouseleave 被 resizing 挡掉了，这里补一次
 			const rect = panel.getBoundingClientRect();
@@ -286,7 +291,36 @@ bindResize(this: any, panel, handle) {
 	});
 },
 
-/** 定位：dock 贴 ribbon 图标；center 居中于视口 */
+/** 标题栏移动本次打开的浮层。捕获指针后，拖出标题栏也能继续移动。 */
+bindPanelDrag(this: any, panel: HTMLElement, header: HTMLElement) {
+	let drag: { pointerId: number; x: number; y: number; left: number; top: number } | null = null;
+	header.addEventListener('pointerdown', (event) => {
+		if (event.button !== 0 || drag || (event.target as Element).closest('button')) return;
+		event.preventDefault();
+		header.setPointerCapture(event.pointerId);
+		drag = {
+			pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+			left: panel.offsetLeft, top: panel.offsetTop,
+		};
+		this.cancelClose();
+		panel.classList.add('is-dragging');
+	});
+	header.addEventListener('pointermove', (event) => {
+		if (drag?.pointerId !== event.pointerId || this.panelEl !== panel) return;
+		const dx = event.clientX - drag.x;
+		const dy = event.clientY - drag.y;
+		if (!dx && !dy && !this.panelPosition) return;
+		this.panelPosition = { left: drag.left + dx, top: drag.top + dy };
+		this.reposition();
+	});
+	header.addEventListener('lostpointercapture', (event) => {
+		if (drag?.pointerId !== event.pointerId) return;
+		drag = null;
+		panel.classList.remove('is-dragging');
+	});
+},
+
+/** 定位：优先保留本次拖动的位置，否则按入口定位。 */
 reposition(this: any) {
 	const panel = this.panelEl;
 	if (!panel) return;
@@ -296,9 +330,19 @@ reposition(this: any) {
 	const w = panel.offsetWidth;
 	const h = panel.offsetHeight;
 
+	if (this.panelPosition) {
+		const left = Math.min(Math.max(this.panelPosition.left, VIEWPORT_MARGIN),
+			Math.max(VIEWPORT_MARGIN, vw - w - VIEWPORT_MARGIN));
+		const top = Math.min(Math.max(this.panelPosition.top, VIEWPORT_MARGIN),
+			Math.max(VIEWPORT_MARGIN, vh - h - VIEWPORT_MARGIN));
+		panel.style.left = `${Math.round(left)}px`;
+		panel.style.top = `${Math.round(top)}px`;
+		return;
+	}
+
 	if (this.placement === 'center') {
-		panel.style.left = `${Math.round((vw - w) / 2)}px`;
-		panel.style.top = `${Math.round((vh - h) / 2)}px`;
+		panel.style.left = `${Math.max(VIEWPORT_MARGIN, Math.round((vw - w) / 2))}px`;
+		panel.style.top = `${Math.max(VIEWPORT_MARGIN, Math.round((vh - h) / 2))}px`;
 		return;
 	}
 
@@ -317,12 +361,13 @@ reposition(this: any) {
 
 closePanel(this: any, reason?: any) {
 	this.cancelClose();
+	++this.openRequest;
 	// 排查「浮层莫名消失」时用：console 里过滤 nav-dock 就能看到是谁关的
 	if (reason) console.debug('[nav-dock] 关闭浮层：' + reason);
 
 	// 编辑中关窗：先把内容强制存盘再卸载，否则未到 2 秒防抖的改动会丢
-	this.exitEditing();
-	this.teardownEmbed();
+	const saving = this.teardownEmbed();
+	this.closingEditor = Promise.all([this.closingEditor, saving]).then(() => undefined);
 
 	// 预览浮层挂在 body 上，不会随本浮层一起销毁，必须手动收
 	this.dismissHoverPreview();
@@ -330,10 +375,6 @@ closePanel(this: any, reason?: any) {
 	this.hoverParent = null;
 	this.popoverSeenAt = 0;
 
-	if (this.renderComponent) {
-		this.renderComponent.unload();
-		this.renderComponent = null;
-	}
 	if (this.panelEl) {
 		this.panelEl.remove();
 		this.panelEl = null;
@@ -343,7 +384,9 @@ closePanel(this: any, reason?: any) {
 		this.backdropEl = null;
 	}
 	this.resizing = false;
+	this.panelPosition = null;
 	this.pinned = false;
+	this.locked = false;
 	this.placement = 'dock';
 	document.body.removeClass('nav-dock-resizing');
 },

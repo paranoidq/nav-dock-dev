@@ -1,16 +1,13 @@
 {
-  "name": "nav-dock",
-  "version": "0.11.1",
-  "description": "Nav Dock — ribbon 图标弹出 md 导航浮层（Lifein 自用插件）",
+  "name": "nav-dock-dev",
+  "version": "0.12.0-dev.7",
+  "description": "Multi-note ribbon shortcuts with lockable Markdown editor panels.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "node esbuild.config.mjs --production",
     "check": "tsc --noEmit",
-    "verify": "node tools/snapshot.cjs",
-    "sync": "python3 sync.py",
-    "sync:check": "python3 sync.py --check",
-    "test": "/Users/chris/.workbuddy-ai/binaries/python/envs/default/bin/python _test/probe.py && /Users/chris/.workbuddy-ai/binaries/python/envs/default/bin/python _test/probe.py --dark && /Users/chris/.workbuddy-ai/binaries/python/envs/default/bin/python _test/settings_probe.py && /Users/chris/.workbuddy-ai/binaries/python/envs/default/bin/python _test/settings_probe.py --dark"
+    "test:smoke": "node scripts/smoke-test.mjs"
   },
   "license": "MIT",
   "devDependencies": {

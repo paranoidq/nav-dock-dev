@@ -1,9 +1,9 @@
 {
-  "id": "nav-dock",
-  "name": "Nav Dock",
-  "version": "0.11.1",
+  "id": "nav-dock-dev",
+  "name": "Nav Dock-dev",
+  "version": "0.12.0-dev.7",
   "minAppVersion": "1.5.0",
-  "description": "Open a Markdown navigation note in a pop-up panel beside the ribbon — hover or click to view, without spending a tab.",
+  "description": "Edit multiple notes from individual ribbon icons, with lockable popup editors.",
   "author": "iChris007",
   "authorUrl": "https://github.com/ichris007",
   "isDesktopOnly": true

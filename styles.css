@@ -63,12 +63,19 @@
 /* ---------- 顶部标题栏 ---------- */
 
 .nav-dock-panel .nav-dock-header {
+	cursor: grab;
+	user-select: none;
+	touch-action: none;
 	flex: 0 0 auto;
 	display: flex;
 	align-items: center;
 	gap: 6px;
 	padding: 8px 8px 8px 14px;
 	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.nav-dock-panel.is-dragging .nav-dock-header {
+	cursor: grabbing;
 }
 
 .nav-dock-panel .nav-dock-title {
@@ -343,4 +350,73 @@ body.nav-dock-resizing * {
 	font-size: var(--font-ui-smaller);
 	color: var(--text-faint);
 	text-align: right;
+}
+
+/* Native editor: fill the popup, without the tab chrome or duplicated title. */
+.nav-dock-panel .nav-dock-editor-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	display: flex;
+	overflow: hidden;
+	--file-line-width: 100%;
+	--file-margins: 12px 16px 24px;
+}
+
+.nav-dock-panel .nav-dock-editor-leaf {
+	position: relative !important;
+	display: flex !important;
+	flex: 1 1 auto;
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	min-height: 0;
+	border: 0;
+	box-shadow: none;
+	background: transparent;
+}
+
+.nav-dock-editor-leaf > .workspace-leaf-content,
+.nav-dock-editor-leaf > .workspace-leaf-content > .view-content {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+	padding: 0;
+}
+
+.nav-dock-editor-leaf .view-header,
+.nav-dock-editor-leaf .inline-title,
+.nav-dock-editor-leaf .metadata-container,
+.nav-dock-editor-leaf .workspace-leaf-resize-handle {
+	display: none !important;
+}
+
+.nav-dock-editor-leaf .markdown-source-view.mod-cm6 {
+	flex: 1 1 auto;
+	min-height: 0;
+	height: 100%;
+}
+
+.nav-dock-panel .nav-dock-lock.is-active {
+	color: var(--interactive-accent);
+	background: var(--background-modifier-hover);
+}
+
+.nav-dock-header.is-compact .nav-dock-title {
+	visibility: hidden;
+}
+
+.nav-dock-entry-card {
+	margin: 12px 0;
+	padding: 0 14px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+}
+
+.nav-dock-entry-card > .setting-item:first-child {
+	border-top: 0;
+}
+
+.nav-dock-entry-card .setting-item-control input[type='text'] {
+	width: min(300px, 100%);
 }

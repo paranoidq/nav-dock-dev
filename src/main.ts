@@ -1,27 +1,8 @@
-/*
- * Nav Dock —— 鼠标悬停 ribbon 图标，在图标右侧弹出指定 Markdown 文档的浮层。
- *
- * 设计要点：
- * 1. 浮层挂在 document.body 下、position: fixed，位置由 ribbon 图标的实际
- *    getBoundingClientRect() 算出。这样无论左侧栏是固定还是悬浮（hover-ribbon /
- *    hover-sidedock），浮层都贴着图标边缘，不会错位。
- * 2. 内容容器套 .markdown-preview-view.markdown-rendered，直接复用主题的正文排版
- *    （字体、行距、标题、引用块、callout 全部跟正文一致），不另起一套样式。
- * 3. 悬停触发：图标与浮层之间隔着 gap，鼠标穿过空隙时会先触发图标的 mouseleave，
- *    所以收起走「延迟 + 进出取消」——进入浮层即撤销收起。
- * 4. 右下角拖拽改尺寸：左上角固定、右下角跟手，尺寸写回设置，下次打开沿用。
- * 5. 可编辑：内容用 embedRegistry 的 MarkdownEmbed 承载，点一下就地编辑、自动存盘。
- *
- * 模块划分（按关注点，方法经 Object.assign 挂到原型，this 即插件实例）：
- *   pane.ts       「新标签页开在哪」的判定链
- *   embed.ts      可编辑嵌入（挂载/卸载/进出编辑态）
- *   preview.ts    双链悬停预览，以及它和主浮层的收场博弈
- *   panel.ts      浮层 DOM：定位/尺寸/拖拽/关闭/链接接管
- *   lifecycle.ts  onunload、设置读写、ribbon、命令与 URI
- *   settings-tab.ts / file-suggest.ts / icon-picker.ts   设置页
- *   shims.ts      Obsidian 内部 API 的集中适配层（都不在 obsidian.d.ts 里）
+/* Nav Dock-dev: multiple ribbon shortcuts and lockable native Markdown editors.
+ * pane / preview retain the upstream navigation and hover-preview integration.
+ * embed hosts a detached native editor; panel owns its popup and save lifecycle.
  */
-import { Plugin } from 'obsidian';
+import { MarkdownView, Plugin, type Command } from 'obsidian';
 import type { NavDockSettings } from './constants';
 import type { Lang } from './i18n';
 import { paneMethods } from './pane';
@@ -30,7 +11,8 @@ import { previewMethods } from './preview';
 import { panelMethods } from './panel';
 import { lifecycleMethods } from './lifecycle';
 import { NavDockSettingTab } from './settings-tab';
-import type { HoverParentLike, MarkdownEmbedLike } from './shims';
+import { wsInternal, type HoverParentLike } from './shims';
+import type { WorkspaceLeaf } from 'obsidian';
 
 class NavDockPlugin extends Plugin {
 	settings!: NavDockSettings;
@@ -42,10 +24,17 @@ class NavDockPlugin extends Plugin {
 
 	// ---- 浮层状态 ----
 	panelEl: HTMLElement | null = null;
-	renderComponent: any = null;
+	panelPosition: { left: number; top: number } | null = null;
 	closeTimer: number | null = null;
 	resizing = false;
 	lastWarnAt = 0;
+	locked = false;
+	activeEntryId = '';
+	ribbonEls = new Map<string, HTMLElement>();
+	entryCommands = new Map<string, Command>();
+	openRequest = 0;
+	disposed = false;
+	closingEditor: Promise<void> = Promise.resolve();
 	pinned = false;            // 快捷键/命令打开时固定，不随鼠标离开收起
 	currentFilePath = '';      // 浮层渲染时用的 sourcePath，openLinkText 需要
 	placement: 'dock' | 'center' = 'dock';
@@ -62,9 +51,9 @@ class NavDockPlugin extends Plugin {
 	lastPointer: { x: number | null; y: number | null } = { x: null, y: null };
 	popoverSeenAt = 0;
 
-	// ---- 可编辑嵌入（embed.ts 用）----
-	embed: MarkdownEmbedLike | null = null;
-	editScope: any = null;
+	// ---- 原生 Markdown 编辑器（embed.ts 用）----
+	editorLeaf: WorkspaceLeaf | null = null;
+	editorReady: Promise<void> | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -86,35 +75,17 @@ class NavDockPlugin extends Plugin {
 		// defaultMod = false 表示不用按 Cmd，悬停即预览。
 		this.registerHoverSource();
 
-		// label 为空（没自定义过）时用当前语言的默认提示
-		this.ribbonEl = this.addRibbonIcon(
-			this.settings.icon,
-			this.settings.label || this.uiStrings().labelDefault,
-			() => {
-				if (this.panelEl) {
-					this.closePanel();
-					return;
-				}
-				// 图标触发的浮层一律贴 ribbon；点击模式下固定住
-				// void：回调是同步签名，openPanel 的失败已在内部处理，这里显式忽略 Promise
-				void this.openPanel({
-					pinned: this.settings.trigger === 'click',
-					placement: 'dock',
-				});
-			}
-		);
-		this.ribbonEl.addClass('nav-dock-ribbon');
+		this.refreshRibbonIcon();
 
-		// 悬停即展开（仅悬停模式）
-		this.registerDomEvent(this.ribbonEl, 'mouseenter', () => {
-			if (this.settings.trigger !== 'hover') return;
-			this.cancelClose();
-			this.openByHover();
-		});
-		this.registerDomEvent(this.ribbonEl, 'mouseleave', () => {
-			if (this.settings.trigger !== 'hover') return;
-			this.scheduleClose();
-		});
+		// Pickers keep the editor that opened them as their insertion target.
+		// Focusing another view releases that context, including while locked.
+		this.registerDomEvent(document, 'focusin', (event) => {
+			const leaf = this.editorLeaf;
+			if (!(leaf?.view instanceof MarkdownView)) return;
+			const target = event.target as Element;
+			if (this.panelEl?.contains(target) || this.isEditorAuxiliaryTarget(target)) return;
+			wsInternal(this.app).unsetActiveEditor(leaf.view);
+		}, true);
 
 		// 命令名走当前语言；存下命令对象，切语言时改 name 即可即时生效
 		// （Obsidian 命令面板每次打开都从命令对象读 name）
@@ -157,21 +128,19 @@ class NavDockPlugin extends Plugin {
 			})
 		);
 
-		// URI 入口：obsidian://nav-dock?action=toggle / open-in-tab
+		// URI 入口：obsidian://nav-dock-dev?action=toggle / open-in-tab
 		// 方便在笔记里放链接，或用 meta-bind 之类的插件做按钮
-		this.registerObsidianProtocolHandler('nav-dock', (params) => {
+		this.registerObsidianProtocolHandler('nav-dock-dev', (params) => {
 			if (params && params.action === 'open-in-tab') this.openInTab();
-			else this.togglePinned();
+			else this.togglePinned(params?.entry);
 		});
 
 		this.addSettingTab(new NavDockSettingTab(this.app, this as any));
 
-		// ESC 分级退。capture 阶段抢在 Obsidian 自己的 ESC 处理之前，避免同时关掉别的弹窗。
-		// 顺序：预览在编辑 → 退预览编辑；预览还在 → 只收预览；
-		//       主浮层在编辑 → 退主浮层编辑；最后才收主浮层。
-		// 以前是一把 closePanel()，按一次 ESC 预览和主浮层同时消失。
+		// Esc closes a child preview first, then saves and closes the main editor.
 		this.registerDomEvent(document, 'keydown', (evt) => {
-			if (evt.key !== 'Escape' || !this.panelEl) return;
+			if (evt.key !== 'Escape' || !this.panelEl || evt.defaultPrevented) return;
+			if (this.isEditorAuxiliaryTarget(evt.target as Element) || this.hasEditorDialog()) return;
 
 			const pop = this.hoverParent && this.hoverParent.hoverPopover;
 			const pe = pop && pop.embed;
@@ -190,11 +159,6 @@ class NavDockPlugin extends Plugin {
 				this.dismissHoverPreview();
 				return;
 			}
-			if (this.isEditing()) {
-				this.swallowEscape(evt);
-				this.exitEditing();
-				return;
-			}
 			this.swallowEscape(evt);
 			this.closePanel('esc');
 		}, true);
@@ -202,10 +166,12 @@ class NavDockPlugin extends Plugin {
 		// 点击浮层与图标以外的任何地方都关闭。
 		// 图标本身要排除：它的 click 有自己的语义，若这里先关掉会变成「点了没反应」。
 		this.registerDomEvent(document, 'mousedown', (evt) => {
-			if (!this.panelEl || this.resizing) return;
+			if (!this.panelEl || this.resizing || this.locked) return;
 			const target = evt.target as Element;
 			if (this.panelEl.contains(target)) return;
-			if (this.ribbonEl && this.ribbonEl.contains(target)) return;
+			if ([...this.ribbonEls.values()].some((el) => el.contains(target))) return;
+			// 原生编辑器的补全菜单、右键菜单挂在 body 下，也属于编辑操作。
+			if (this.isEditorAuxiliaryTarget(target)) return;
 			// 双链预览浮层挂在 document.body 上、不在本浮层里，但它是本浮层
 			// 唤出的「二级窗口」：在这里按下必须当成「还在本浮层里」。
 			// 否则预览一出现就被收掉，且 closePanel 会顺手 hide 掉预览 ——
@@ -218,6 +184,22 @@ class NavDockPlugin extends Plugin {
 			this.unpinHoverPreview();
 			this.closePanel();
 		}, true);
+
+
+		// 路径随文件重命名更新；每个入口仍指向同一份笔记。
+		this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
+			let changed = false;
+			for (const entry of this.settings.entries) {
+				if (entry.notePath === oldPath || entry.notePath.startsWith(oldPath + '/')) {
+					entry.notePath = file.path + entry.notePath.slice(oldPath.length);
+					changed = true;
+				}
+			}
+			if (changed) {
+				void this.saveSettings();
+				this.refreshRibbonIcon();
+			}
+		}));
 
 		// 窗口尺寸变化时重新贴合图标
 		this.registerDomEvent(window, 'resize', () => this.reposition());

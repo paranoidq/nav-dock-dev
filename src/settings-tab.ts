@@ -5,7 +5,7 @@
  * 这个文件里不写死任何一种语言。切语言时整页 display() 重画即可。
  */
 import { PluginSettingTab, Setting, Notice, setIcon, debounce } from 'obsidian';
-import { DEFAULT_SETTINGS } from './constants';
+import { DEFAULT_SETTINGS, createEntry, type NoteEntry } from './constants';
 import { attachFileSuggest } from './file-suggest';
 import { IconPickerModal, iconDisplayName } from './icon-picker';
 
@@ -45,41 +45,71 @@ export class NavDockSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName(S.setNote)
-			.setDesc(S.setNoteDesc)
-			.addText((text) => {
-				text
-					.setPlaceholder(S.setNotePlaceholder)
-					.setValue(this.plugin.settings.notePath);
+			.setName(S.filesTitle)
+			.setDesc(S.filesDesc)
+			.addButton((btn) => btn.setButtonText(S.addFile).setCta().onClick(async () => {
+				this.plugin.settings.entries.push(createEntry());
+				await this.plugin.saveSettings();
+				this.plugin.refreshRibbonIcon();
+				this.display();
+			}));
 
-				attachFileSuggest(this.app, text.inputEl, async (file) => {
-					this.plugin.settings.notePath = file.path;
-					text.setValue(file.path);
+		this.plugin.settings.entries.forEach((entry: NoteEntry, index: number) => {
+			const card = containerEl.createDiv({ cls: 'nav-dock-entry-card' });
+			new Setting(card)
+				.setName(entry.label || entry.notePath.split('/').pop()?.replace(/\.md$/i, '') || S.unnamedFile(index + 1))
+				.addExtraButton((btn) => btn.setIcon('arrow-up').setTooltip(S.moveUp).setDisabled(index === 0).onClick(() => this.moveEntry(index, -1)))
+				.addExtraButton((btn) => btn.setIcon('arrow-down').setTooltip(S.moveDown).setDisabled(index === this.plugin.settings.entries.length - 1).onClick(() => this.moveEntry(index, 1)))
+				.addExtraButton((btn) => btn.setIcon('trash-2').setTooltip(S.removeFile).onClick(async () => {
+					this.plugin.settings.entries.splice(index, 1);
 					await this.plugin.saveSettings();
-				});
-
-				// 手输时不要每个字符都写盘
-				const saveSoon =
-					typeof debounce === 'function'
-						? debounce(() => this.plugin.saveSettings(), 400)
-						: () => this.plugin.saveSettings();
-				text.onChange((value) => {
-					this.plugin.settings.notePath = value;
-					saveSoon();
-				});
-			})
-			.addButton((btn) =>
-				btn.setButtonText(S.btnUseCurrent).onClick(async () => {
-					const file = this.app.workspace.getActiveFile();
-					if (!file) {
-						new Notice(S.noticeNoActiveFile);
-						return;
-					}
-					this.plugin.settings.notePath = file.path;
-					await this.plugin.saveSettings();
+					this.plugin.refreshRibbonIcon();
 					this.display();
+				}));
+
+			const updatePath = async (path: string) => {
+				if (entry.notePath !== path && this.plugin.activeEntryId === entry.id) this.plugin.closePanel();
+				entry.notePath = path;
+				await this.plugin.saveSettings();
+				this.plugin.refreshRibbonIcon();
+			};
+			new Setting(card).setName(S.setNote).setDesc(S.setNoteDesc)
+				.addText((text) => {
+					text.setPlaceholder(S.setNotePlaceholder).setValue(entry.notePath);
+					attachFileSuggest(this.app, text.inputEl, async (file) => {
+						text.setValue(file.path);
+						await updatePath(file.path);
+					});
+					const saveSoon = debounce((value: string) => void updatePath(value.trim()), 400, true);
+					text.onChange((value) => saveSoon(value));
 				})
-			);
+				.addButton((btn) => btn.setButtonText(S.btnUseCurrent).onClick(async () => {
+					const file = this.app.workspace.getActiveFile();
+					if (!file || file.extension !== 'md') { new Notice(S.noticeNoActiveFile); return; }
+					await updatePath(file.path);
+					this.display();
+				}));
+
+			const iconSetting = new Setting(card).setName(S.setIconName).setDesc(S.setIconDesc(iconDisplayName(entry.icon)));
+			const preview = iconSetting.controlEl.createDiv({ cls: 'nav-dock-icon-preview' });
+			setIcon(preview, entry.icon);
+			iconSetting.addButton((btn) => btn.setButtonText(S.btnPickIcon).onClick(() => {
+				new IconPickerModal(this.app, entry.icon, async (icon: string) => {
+					entry.icon = icon;
+					await this.plugin.saveSettings();
+					this.plugin.refreshRibbonIcon();
+					setIcon(preview, icon);
+					iconSetting.setDesc(S.setIconDesc(iconDisplayName(icon)));
+				}, S).open();
+			}));
+
+			new Setting(card).setName(S.setLabel).setDesc(S.setLabelDesc)
+				.addText((text) => text.setPlaceholder(S.setLabelPlaceholder).setValue(entry.label).onChange(async (value) => {
+					entry.label = value.trim();
+					await this.plugin.saveSettings();
+					this.plugin.refreshRibbonIcon();
+				}));
+		});
 
 		new Setting(containerEl)
 			.setName(S.setTrigger)
@@ -91,40 +121,6 @@ export class NavDockSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.trigger)
 					.onChange(async (value) => {
 						await this.plugin.setTrigger(value);
-					})
-			);
-
-		const iconSetting = new Setting(containerEl)
-			.setName(S.setIconName)
-			.setDesc(S.setIconDesc(iconDisplayName(this.plugin.settings.icon)));
-
-		// 当前图标的预览，选完立刻换
-		const iconPreview = iconSetting.controlEl.createDiv({ cls: 'nav-dock-icon-preview' });
-		setIcon(iconPreview, this.plugin.settings.icon);
-
-		iconSetting.addButton((btn) =>
-			btn.setButtonText(S.btnPickIcon).onClick(() => {
-				new IconPickerModal(this.app, this.plugin.settings.icon, async (id) => {
-					this.plugin.settings.icon = id;
-					await this.plugin.saveSettings();
-					this.plugin.refreshRibbonIcon();
-					setIcon(iconPreview, id);
-					iconSetting.setDesc(S.setIconDesc(iconDisplayName(id)));
-				}, S).open();
-			})
-		);
-
-		new Setting(containerEl)
-			.setName(S.setLabel)
-			.setDesc(S.setLabelDesc)
-			.addText((text) =>
-				text
-					.setPlaceholder(S.setLabelPlaceholder)
-					.setValue(this.plugin.settings.label)
-					.onChange(async (value) => {
-						this.plugin.settings.label = value.trim();
-						await this.plugin.saveSettings();
-						this.plugin.refreshRibbonIcon();
 					})
 			);
 
@@ -172,7 +168,7 @@ export class NavDockSettingTab extends PluginSettingTab {
 			.addButton((btn) =>
 				btn.setButtonText(S.btnReset).onClick(async () => {
 					this.plugin.settings.width = DEFAULT_SETTINGS.width;
-					this.plugin.settings.height = 0;
+					this.plugin.settings.height = DEFAULT_SETTINGS.height;
 					await this.plugin.saveSettings();
 					this.plugin.applySize();
 					this.plugin.reposition();
@@ -187,6 +183,7 @@ export class NavDockSettingTab extends PluginSettingTab {
 				toggle.setValue(this.plugin.settings.showHeader).onChange(async (value) => {
 					this.plugin.settings.showHeader = value;
 					await this.plugin.saveSettings();
+					this.plugin.panelEl?.querySelector('.nav-dock-header')?.toggleClass('is-compact', !value);
 				})
 			);
 
@@ -214,4 +211,14 @@ export class NavDockSettingTab extends PluginSettingTab {
 				})
 			);
 	}
+	async moveEntry(index: number, offset: number) {
+		const entries = this.plugin.settings.entries;
+		const next = index + offset;
+		if (next < 0 || next >= entries.length) return;
+		[entries[index], entries[next]] = [entries[next], entries[index]];
+		await this.plugin.saveSettings();
+		this.plugin.refreshRibbonIcon();
+		this.display();
+	}
+
 }

@@ -277,14 +277,17 @@ isPointerInside(this: any) {
 
 /** 延迟收起；进入图标或浮层时会被 cancelClose 撤销 */
 scheduleClose(this: any) {
-	if (this.resizing || this.pinned) return;
+	if (this.hasEditorDialog()) return;
+	if (this.resizing || this.pinned || this.locked || this.panelEl?.classList.contains('is-dragging')) return;
 	// 正在编辑：鼠标离开也不收，否则编辑到一半浮层消失
-	if (this.isEditing()) return;
+	if (this.panelEl?.contains(document.activeElement)) return;
 	// 点击模式不自动收：开与关都由用户决定
 	if (this.settings.trigger !== 'hover') return;
 	this.cancelClose();
 	this.closeTimer = window.setTimeout(() => {
 		this.closeTimer = null;
+		if (this.hasEditorDialog()) return;
+		if (this.locked || this.pinned || this.resizing) return;
 
 		// 鼠标还在本浮层或预览浮层上、或焦点在预览的编辑器里：不收
 		if (this.isStillInUse()) {
