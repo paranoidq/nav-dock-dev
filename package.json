@@ -1,13 +1,14 @@
 {
   "name": "nav-dock-dev",
-  "version": "0.12.0-dev.7",
+  "version": "0.12.0-dev.8",
   "description": "Multi-note ribbon shortcuts with lockable Markdown editor panels.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "node esbuild.config.mjs --production",
     "check": "tsc --noEmit",
-    "test:smoke": "node scripts/smoke-test.mjs"
+    "test:smoke": "node scripts/smoke-test.mjs",
+    "test:editor-context": "node scripts/editor-context-test.mjs"
   },
   "license": "MIT",
   "devDependencies": {

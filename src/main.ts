@@ -57,6 +57,7 @@ class NavDockPlugin extends Plugin {
 
 	async onload() {
 		await this.loadSettings();
+		this.registerEditorContext();
 
 		// 追踪鼠标位置：判断「该不该收」不能只看预览浮层在不在 ——
 		// 它在进编辑、尺寸变化、鼠标微动时都可能被 Obsidian 自己收掉，

@@ -1,7 +1,7 @@
 {
   "id": "nav-dock-dev",
   "name": "Nav Dock-dev",
-  "version": "0.12.0-dev.7",
+  "version": "0.12.0-dev.8",
   "minAppVersion": "1.5.0",
   "description": "Edit multiple notes from individual ribbon icons, with lockable popup editors.",
   "author": "iChris007",

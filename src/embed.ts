@@ -5,6 +5,32 @@ import { Notice, WorkspaceLeaf, MarkdownView } from 'obsidian';
 import { wsInternal } from './shims';
 
 export const embedMethods = {
+/** Keep native focus commands and plugins such as cMenu on the popup editor. */
+registerEditorContext(this: any) {
+	const plugin = this;
+	const workspace = this.app.workspace;
+	const original = workspace.getActiveViewOfType;
+	let enabled = true;
+	const getActiveViewOfType = function(this: any, type: any) {
+		const view = plugin.editorLeaf?.view;
+		// activeEditor survives picker dialogs, but is released on background focus.
+		// Merely opening a shortcut without focus must not change command targets.
+		// Read the backing field: activeEditor falls back to getActiveViewOfType.
+		if (enabled && view instanceof MarkdownView && wsInternal(plugin.app)._activeEditor === view) {
+			return view instanceof type ? view : null;
+		}
+		return original.call(this, type);
+	};
+	workspace.getActiveViewOfType = getActiveViewOfType;
+	this.register(() => {
+		enabled = false;
+		// Another plugin may have wrapped us since load; keep its wrapper intact.
+		if (workspace.getActiveViewOfType === getActiveViewOfType) {
+			workspace.getActiveViewOfType = original;
+		}
+	});
+},
+
 async renderPanelContent(this: any, containerEl: HTMLElement, file, request: number, focus: boolean) {
 	const leaf = new (WorkspaceLeaf as any)(this.app) as WorkspaceLeaf & { containerEl: HTMLElement };
 	this.editorLeaf = leaf;
