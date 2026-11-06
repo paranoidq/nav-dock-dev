@@ -20,6 +20,7 @@ export interface NavDockSettings {
 	linkOpenMode: 'new-tab' | 'current-tab';
 	width: number;
 	height: number;
+	panelPosition: { left: number; top: number } | null;
 	gap: number;
 	closeOnLink: boolean;
 	showHeader: boolean;
@@ -33,6 +34,7 @@ export const DEFAULT_SETTINGS: NavDockSettings = {
 	linkOpenMode: 'new-tab',  // 'new-tab' = 双链在新标签页打开；'current-tab' = 替换当前标签页
 	width: 380,          // 浮层宽度 px
 	height: 520,         // 编辑器需要明确的可用高度
+	panelPosition: null, // 所有入口共用最后一次拖动的位置；未拖动时跟随入口
 	gap: 8,              // 与 ribbon 的水平间距 px
 	closeOnLink: true,   // 点击内部/外部链接后自动收起
 	showHeader: true,    // 显示顶部标题栏（文件名 + 在标签页打开）

@@ -291,16 +291,16 @@ bindResize(this: any, panel, handle) {
 	});
 },
 
-/** 标题栏移动本次打开的浮层。捕获指针后，拖出标题栏也能继续移动。 */
+/** 所有入口共用最后一次拖动的位置，松手时保存。 */
 bindPanelDrag(this: any, panel: HTMLElement, header: HTMLElement) {
-	let drag: { pointerId: number; x: number; y: number; left: number; top: number } | null = null;
+	let drag: { pointerId: number; x: number; y: number; left: number; top: number; moved: boolean } | null = null;
 	header.addEventListener('pointerdown', (event) => {
 		if (event.button !== 0 || drag || (event.target as Element).closest('button')) return;
 		event.preventDefault();
 		header.setPointerCapture(event.pointerId);
 		drag = {
 			pointerId: event.pointerId, x: event.clientX, y: event.clientY,
-			left: panel.offsetLeft, top: panel.offsetTop,
+			left: panel.offsetLeft, top: panel.offsetTop, moved: false,
 		};
 		this.cancelClose();
 		panel.classList.add('is-dragging');
@@ -309,18 +309,29 @@ bindPanelDrag(this: any, panel: HTMLElement, header: HTMLElement) {
 		if (drag?.pointerId !== event.pointerId || this.panelEl !== panel) return;
 		const dx = event.clientX - drag.x;
 		const dy = event.clientY - drag.y;
-		if (!dx && !dy && !this.panelPosition) return;
-		this.panelPosition = { left: drag.left + dx, top: drag.top + dy };
+		if (!dx && !dy && !drag.moved) return;
+		drag.moved = true;
+		this.settings.panelPosition = { left: drag.left + dx, top: drag.top + dy };
 		this.reposition();
 	});
-	header.addEventListener('lostpointercapture', (event) => {
+	const finishDrag = (event: PointerEvent) => {
 		if (drag?.pointerId !== event.pointerId) return;
+		if (drag.moved && this.panelEl === panel) this.savePanelPosition(panel);
 		drag = null;
 		panel.classList.remove('is-dragging');
-	});
+	};
+	header.addEventListener('pointerup', finishDrag);
+	header.addEventListener('pointercancel', finishDrag);
+	header.addEventListener('lostpointercapture', finishDrag);
 },
 
-/** 定位：优先保留本次拖动的位置，否则按入口定位。 */
+savePanelPosition(this: any, panel: HTMLElement) {
+	// Save the visible, clamped position rather than an off-screen drag coordinate.
+	this.settings.panelPosition = { left: panel.offsetLeft, top: panel.offsetTop };
+	void this.saveSettings();
+},
+
+/** 定位：优先保留所有入口共用的位置，否则按入口定位。 */
 reposition(this: any) {
 	const panel = this.panelEl;
 	if (!panel) return;
@@ -330,10 +341,10 @@ reposition(this: any) {
 	const w = panel.offsetWidth;
 	const h = panel.offsetHeight;
 
-	if (this.panelPosition) {
-		const left = Math.min(Math.max(this.panelPosition.left, VIEWPORT_MARGIN),
+	if (this.settings.panelPosition) {
+		const left = Math.min(Math.max(this.settings.panelPosition.left, VIEWPORT_MARGIN),
 			Math.max(VIEWPORT_MARGIN, vw - w - VIEWPORT_MARGIN));
-		const top = Math.min(Math.max(this.panelPosition.top, VIEWPORT_MARGIN),
+		const top = Math.min(Math.max(this.settings.panelPosition.top, VIEWPORT_MARGIN),
 			Math.max(VIEWPORT_MARGIN, vh - h - VIEWPORT_MARGIN));
 		panel.style.left = `${Math.round(left)}px`;
 		panel.style.top = `${Math.round(top)}px`;
@@ -376,6 +387,10 @@ closePanel(this: any, reason?: any) {
 	this.popoverSeenAt = 0;
 
 	if (this.panelEl) {
+		// Switching shortcuts can close a panel before its pointer is released.
+		if (this.panelEl.hasClass('is-dragging') && this.settings.panelPosition) {
+			this.savePanelPosition(this.panelEl);
+		}
 		this.panelEl.remove();
 		this.panelEl = null;
 	}
@@ -384,7 +399,6 @@ closePanel(this: any, reason?: any) {
 		this.backdropEl = null;
 	}
 	this.resizing = false;
-	this.panelPosition = null;
 	this.pinned = false;
 	this.locked = false;
 	this.placement = 'dock';

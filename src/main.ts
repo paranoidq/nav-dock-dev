@@ -24,7 +24,6 @@ class NavDockPlugin extends Plugin {
 
 	// ---- 浮层状态 ----
 	panelEl: HTMLElement | null = null;
-	panelPosition: { left: number; top: number } | null = null;
 	closeTimer: number | null = null;
 	resizing = false;
 	lastWarnAt = 0;

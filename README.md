@@ -10,6 +10,7 @@ A local development fork of [Nav Dock](https://github.com/ichris007/nav-dock), u
 - Close explicitly with Esc, the close button, or the same ribbon icon. Another shortcut switches files.
 - One popup at a time; no workspace tabs or background-blocking overlay.
 - Resize from the bottom-right corner; shortcuts follow renamed notes.
+- Drag the header to move the popup. All shortcuts share the last dragged position, including after closing or restarting Obsidian.
 
 Configure shortcuts in **Settings → Nav Dock-dev → File shortcuts → Add file**. Removing a shortcut never deletes its note.
 

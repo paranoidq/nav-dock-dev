@@ -54,6 +54,9 @@ unregisterHoverSource(this: any) {
 async loadSettings(this: any) {
 	const data = await this.loadData() || {};
 	this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+	const position = data.panelPosition;
+	this.settings.panelPosition = position && Number.isFinite(position.left) && Number.isFinite(position.top)
+		? { left: position.left, top: position.top } : null;
 	// 首次从原版迁移单文件配置；空数组表示用户主动移除了全部入口。
 	const entries = Array.isArray(data.entries) ? data.entries : [{
 		...createEntry(), notePath: data.notePath || '', icon: data.icon || 'compass', label: data.label || '',

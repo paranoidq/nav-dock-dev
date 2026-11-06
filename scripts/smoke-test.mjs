@@ -37,6 +37,14 @@ async function probe() {
 		check(p.currentFilePath === a.path && p.isEditing(), 'Ribbon click opens the selected file directly in edit mode');
 		check(p.panelEl.querySelector('.cm-editor .cm-content'), 'Native CodeMirror editor is mounted');
 		check(!p.backdropEl, 'No overlay blocks the background editor');
+		const position = {
+			left: Math.round(Math.min(120, Math.max(12, (innerWidth - p.panelEl.offsetWidth - 12) / 2))),
+			top: Math.round(Math.min(80, Math.max(12, (innerHeight - p.panelEl.offsetHeight - 12) / 2))),
+		};
+		p.settings.panelPosition = position;
+		p.reposition();
+		const atPosition = () => p.panelEl?.offsetLeft === position.left && p.panelEl?.offsetTop === position.top;
+		check(atPosition(), 'Saved popup position takes precedence over ribbon placement');
 		const view = p.editorLeaf.view;
 		view.editor.setValue('# Scratch A\nSaved immediately on switch.\n');
 		p.ribbonEls.get('test-b').click();
@@ -44,6 +52,7 @@ async function probe() {
 		await p.closingEditor;
 		check((await app.vault.read(a)).includes('Saved immediately on switch.'), 'Switching files flushes pending edits');
 		check(p.currentFilePath === b.path && p.isEditing(), 'Second ribbon opens the second file in edit mode');
+		check(atPosition(), 'Switching shortcuts preserves the shared popup position');
 		await p.toggleLock();
 		const background = document.querySelector('.workspace-split.mod-root');
 		background.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
@@ -55,7 +64,8 @@ async function probe() {
 		p.panelEl.querySelector('.nav-dock-close').click();
 		await p.closingEditor;
 		check(!p.panelEl && (await app.vault.read(b)).includes('Saved immediately on close.'), 'Close button saves even a locked editor');
-		await p.openPanel({ entryId: 'test-b', placement: 'dock' });
+		await p.openPanel({ entryId: 'test-b', placement: 'center' });
+		check(atPosition(), 'Closing and reopening preserves position even for a centered command');
 		check(p.locked, 'Each file remembers its lock state');
 		await p.toggleLock();
 		background.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
